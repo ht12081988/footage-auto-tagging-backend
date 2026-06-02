@@ -454,9 +454,6 @@ def process_video_task(video_id: UUID, filepath: str):
         last_reported_pct = -1
         processing_progress[video_id] = 0
         frames_since_commit = 0
-        # BLIP captioning interval: every N seconds (CPU is slow, so space them out)
-        CAPTION_INTERVAL_SEC = 5.0
-        last_caption_sec = -CAPTION_INTERVAL_SEC
 
         is_cancelled = False
 
@@ -501,15 +498,10 @@ def process_video_task(video_id: UUID, filepath: str):
                         pil_img = Image.fromarray(rgb_frame)
 
                         emb = vector_service.get_image_embedding(pil_img)
-
-                        # Generate caption only every CAPTION_INTERVAL_SEC seconds (BLIP is slow on CPU)
-                        caption = ""
-                        if (timestamp_sec - last_caption_sec) >= CAPTION_INTERVAL_SEC:
-                            try:
-                                caption = vector_service.generate_caption(pil_img)
-                                last_caption_sec = timestamp_sec
-                            except Exception as ce:
-                                caption = ""
+                        try:
+                            caption = vector_service.generate_caption(pil_img)
+                        except Exception as ce:
+                            caption = ""
 
                         frame_emb = models.FrameEmbedding(
                             video_id=video_id,

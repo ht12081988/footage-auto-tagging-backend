@@ -447,14 +447,16 @@ def process_video_task(video_id: UUID, filepath: str):
         video.duration = duration
         db.commit()
 
-        # 2 FPS sampling
-        frame_interval = int(fps / 2)
-        if frame_interval < 1:
-            frame_interval = 1
+        # 1 FPS sampling (CPU-optimised — halves frame count vs 2 FPS)
+        frame_interval = max(1, int(fps))
 
         current_frame = 0
         last_reported_pct = -1
         processing_progress[video_id] = 0
+        frames_since_commit = 0
+        # BLIP captioning interval: every N seconds (CPU is slow, so space them out)
+        CAPTION_INTERVAL_SEC = 5.0
+        last_caption_sec = -CAPTION_INTERVAL_SEC
 
         is_cancelled = False
 
@@ -497,18 +499,18 @@ def process_video_task(video_id: UUID, filepath: str):
                         # Convert CV2 BGR to RGB
                         rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
                         pil_img = Image.fromarray(rgb_frame)
-                        
+
                         emb = vector_service.get_image_embedding(pil_img)
-                        try:
-                            caption = vector_service.generate_caption(pil_img)
-                        except Exception as ce:
-                            caption = ""
+
+                        # Generate caption only every CAPTION_INTERVAL_SEC seconds (BLIP is slow on CPU)
+                        caption = ""
+                        if (timestamp_sec - last_caption_sec) >= CAPTION_INTERVAL_SEC:
                             try:
-                                with open("debug_blip.log", "a") as dbg:
-                                    dbg.write(f"Frame {current_frame} caption exception: {ce}\n")
-                            except:
-                                pass
-                        
+                                caption = vector_service.generate_caption(pil_img)
+                                last_caption_sec = timestamp_sec
+                            except Exception as ce:
+                                caption = ""
+
                         frame_emb = models.FrameEmbedding(
                             video_id=video_id,
                             timestamp_sec=timestamp_sec,
@@ -516,18 +518,7 @@ def process_video_task(video_id: UUID, filepath: str):
                             caption=caption
                         )
                         db.add(frame_emb)
-                        db.flush()
-                        try:
-                            with open("debug_blip.log", "a") as dbg:
-                                dbg.write(f"Frame {current_frame} success. Caption: {caption}\n")
-                        except:
-                            pass
                     except Exception as ve:
-                        try:
-                            with open("debug_blip.log", "a") as dbg:
-                                dbg.write(f"Frame {current_frame} exception: {ve}\n")
-                        except:
-                            pass
                         print(f"[BLIP] Error generating vector/caption: {ve}")
                 # -----------------------------------------
                 
@@ -584,7 +575,6 @@ def process_video_task(video_id: UUID, filepath: str):
                                         bbox_center_y=bbox_center_y
                                     )
                                     db.add(det)
-                                    db.flush() # Populate det.id so we can link it
     
                                 # ── LPR: attempt plate read on vehicle crops ──
                                 if process_ocr and class_name in VEHICLE_CLASSES:
@@ -638,6 +628,13 @@ def process_video_task(video_id: UUID, filepath: str):
                                                 print(f"[LPR] Plate detected: {plate_text} ({plate_conf:.0%}) @ {timestamp_sec:.1f}s")
                             
             current_frame += 1
+
+            # Batch commit every 10 processed frames to reduce DB round-trips
+            if current_frame % frame_interval == 0:
+                frames_since_commit += 1
+                if frames_since_commit >= 10:
+                    db.commit()
+                    frames_since_commit = 0
 
         cap.release()
         

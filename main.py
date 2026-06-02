@@ -140,10 +140,10 @@ def list_operators(db: Session = Depends(get_db)):
 
 async def upload_to_vercel_blob_stream(file: UploadFile, filename: str) -> str:
     # Ensure environment variables are loaded
-    token = os.environ.get("BLOB_READ_WRITE_TOKEN")
+    token = (os.environ.get("BLOB_READ_WRITE_TOKEN") or "").strip()
     if not token:
         load_env_file()
-        token = os.environ.get("BLOB_READ_WRITE_TOKEN")
+        token = (os.environ.get("BLOB_READ_WRITE_TOKEN") or "").strip()
         
     if not token:
         raise HTTPException(

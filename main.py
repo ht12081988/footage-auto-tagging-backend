@@ -306,7 +306,11 @@ def get_video_captions(video_id: UUID, operator_id: UUID = Query(...), db: Sessi
         raise HTTPException(status_code=404, detail="Video not found")
     if video.operator_id != operator_id:
         raise HTTPException(status_code=403, detail="Access denied")
-    embeddings = db.query(models.FrameEmbedding).filter(models.FrameEmbedding.video_id == video_id).order_by(models.FrameEmbedding.timestamp_sec).all()
+    embeddings = db.query(models.FrameEmbedding).filter(
+        models.FrameEmbedding.video_id == video_id,
+        models.FrameEmbedding.caption != None,
+        models.FrameEmbedding.caption != ""
+    ).order_by(models.FrameEmbedding.timestamp_sec).all()
     return [
         schemas.FrameCaptionResponse(
             id=r.id,
@@ -317,6 +321,7 @@ def get_video_captions(video_id: UUID, operator_id: UUID = Query(...), db: Sessi
         )
         for r in embeddings
     ]
+
 
 @app.get("/videos/{video_id}/progress")
 def get_video_progress(video_id: UUID):
